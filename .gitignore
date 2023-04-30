@@ -1,0 +1,112 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from jellyfish import jaro_winkler
+import usaddress
+import re
+import math
+
+
+# Load the datasets
+left_dataset = pd.read_csv('left_dataset.csv')
+right_dataset = pd.read_csv('right_dataset.csv')
+
+
+left_dataset = left_dataset.head(3000)
+right_dataset = right_dataset.head(3000)
+for col in ['name', 'address', 'city', 'state']:
+    left_dataset[col] = left_dataset[col].astype(str).str.lower()
+for col in ['name', 'address', 'city', 'state']:
+    right_dataset[col] = right_dataset[col].astype(str).str.lower()
+import pandas as pd
+import numpy as np
+import re
+
+def preprocess_name(name):
+    name = name.strip()
+    name = re.sub(r'\b(inc|llc|ltd)\b', '', name)
+    return name.strip()
+
+def extract_zip_code(zip_code):
+    match = re.match(r"(\d+)", zip_code)
+    if match:
+        return match.group(1)
+    return None
+
+def preprocess_address(address):
+    if isinstance(address, float) and math.isnan(address):
+        return ""
+    return address.strip()
+
+def combine_columns(row):
+    address = row['address']
+    zip_code = row['zip_code']
+    city = row['city']
+    state = row['state']
+    info = f"{address} {zip_code} {city} {state}"
+    return info
+
+# Preprocess the data
+left_dataset['name'] = left_dataset['name'].apply(preprocess_name)
+left_dataset['address'] = left_dataset['address'].apply(preprocess_address)
+right_dataset['name'] = right_dataset['name'].apply(preprocess_name)
+right_dataset['address'] = right_dataset['address'].apply(preprocess_address)
+left_dataset['postal_code'] = left_dataset['postal_code'].fillna(-1).astype(int).astype(str).replace('-1', '')
+right_dataset['zip_code'] = right_dataset['zip_code'].astype(str).apply(extract_zip_code)
+left_dataset = left_dataset.rename(columns={'postal_code': 'zip_code'})
+left_dataset['info'] = left_dataset.apply(combine_columns, axis=1)
+right_dataset['info'] = right_dataset.apply(combine_columns, axis=1)
+def jaccard_similarity(a, b):
+    a_set = set(a.split())
+    b_set = set(b.split())
+    intersection = len(a_set.intersection(b_set))
+    union = len(a_set.union(b_set))
+    return intersection / union
+
+
+threshold = 0.6
+
+merged_data = left_dataset.merge(right_dataset, on=['zip_code', 'city', 'state'], suffixes=('_left', '_right'))
+
+
+def similarity(row):
+    name_similarity = jaccard_similarity(row['name_left'], row['name_right'])
+    address_similarity = jaccard_similarity(row['info_left'], row['info_right'])
+    similarity_score = name_similarity*0.3 + address_similarity*0.7
+    return similarity_score
+
+
+merged_data['similarity'] = merged_data.apply(similarity, axis=1)
+
+
+matches = merged_data[merged_data['similarity'] > threshold][['entity_id', 'business_id', 'similarity']].values.tolist()
+
+for match in matches:
+    entity_id = match[0]
+    business_id = match[1]
+    similarity_score = match[2]
+    
+    left_row = left_dataset.loc[left_dataset['entity_id'] == entity_id]
+    right_row = right_dataset.loc[right_dataset['business_id'] == business_id]
+    
+    print("Left dataset:")
+    print("Name: ", left_row['name'].values[0])
+    print("Address: ", left_row['info'].values[0])
+    
+    print("Right dataset:")
+    print("Name: ", right_row['name'].values[0])
+    print("Address: ", right_row['info'].values[0])
+
+    print("Similarity score: ", round(similarity_score,3))
+    print("------------------------------")
+
+left_name = left_dataset.loc[left_dataset['entity_id'] == 9384, 'info'].values[0]
+right_name = right_dataset.loc[right_dataset['business_id'] == 978, 'info'].values[0]
+print(round(jaccard_similarity(left_name, right_name),2))
+print(left_name)
+print(right_name)
+# Find matches
+matches = match_businesses(left_dataset, right_dataset)
+
+matches_df = pd.DataFrame(matches, columns=['left_dataset', 'right_dataset', 'similarity'])
+matches_df.to_csv('matches.csv', index=False)
